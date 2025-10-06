@@ -3,12 +3,25 @@
 支持PC端和移动端访问
 """
 
+# 在导入任何包之前，先设置缓存目录（解决 Streamlit Cloud 权限问题）
+import os
+import tempfile
+import pathlib
+
+# 创建临时缓存目录
+temp_dir = tempfile.gettempdir()
+cache_dir = pathlib.Path(temp_dir) / '.efinance'
+cache_dir.mkdir(parents=True, exist_ok=True)
+
+# 设置环境变量，让 efinance 使用临时目录
+os.environ['HOME'] = temp_dir
+os.environ.setdefault('USERPROFILE', temp_dir)
+
+# 现在导入其他包
 import streamlit as st
 import pandas as pd
 import numpy as np
 import pickle
-import os
-import efinance as ef
 from datetime import datetime
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -16,6 +29,9 @@ import warnings
 import sys
 
 warnings.filterwarnings('ignore')
+
+# 导入 efinance
+import efinance as ef
 
 # 配置页面
 st.set_page_config(
