@@ -11,11 +11,30 @@ import pathlib
 # 创建临时缓存目录
 temp_dir = tempfile.gettempdir()
 cache_dir = pathlib.Path(temp_dir) / '.efinance'
-cache_dir.mkdir(parents=True, exist_ok=True)
 
 # 设置环境变量，让 efinance 使用临时目录
 os.environ['HOME'] = temp_dir
 os.environ.setdefault('USERPROFILE', temp_dir)
+
+# Monkey patch os.mkdir 以处理权限错误（仅用于 efinance 导入）
+_original_os_mkdir = os.mkdir
+
+def _safe_os_mkdir(path, mode=0o777, *, dir_fd=None):
+    """安全的 os.mkdir，处理权限错误"""
+    try:
+        _original_os_mkdir(path, mode=mode, dir_fd=dir_fd)
+    except PermissionError:
+        # 权限错误时静默失败（efinance 会继续运行）
+        pass
+    except FileExistsError:
+        # 目录已存在，忽略
+        pass
+    except Exception:
+        # 其他错误也静默失败
+        pass
+
+# 临时替换 os.mkdir
+os.mkdir = _safe_os_mkdir
 
 # 现在导入其他包
 import streamlit as st
@@ -30,8 +49,12 @@ import sys
 
 warnings.filterwarnings('ignore')
 
-# 导入 efinance
-import efinance as ef
+# 导入 efinance（这时会使用我们的 safe_os_mkdir）
+try:
+    import efinance as ef
+finally:
+    # 导入完成后，恢复原始的 os.mkdir 方法
+    os.mkdir = _original_os_mkdir
 
 # 配置页面
 st.set_page_config(
