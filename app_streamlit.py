@@ -615,6 +615,7 @@ class StreamlitPredictor:
         
         # 如果有模型，使用模型预测
         if self.pattern_models:
+            print("✅ 使用 ML 模型进行形态预测")
             lookback_days = 60
             if len(stock_data) >= lookback_days:
                 lookback_data = stock_data.iloc[-lookback_days:]
@@ -661,6 +662,7 @@ class StreamlitPredictor:
         
         # 如果没有模型结果，使用简化规则作为备用
         if not results:
+            print("⚠️ ML 模型不可用，使用规则分析作为备用")
             results = self._predict_pattern_rule_based(stock_data, horizons)
         
         return results
