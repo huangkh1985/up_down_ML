@@ -1,6 +1,5 @@
 import numpy as np
 import pandas as pd
-import talib
 import matplotlib.pyplot as plt
 import warnings
 from scipy import stats
@@ -11,6 +10,141 @@ from utils.pattern_recognition import add_pattern_features
 
 # 忽略警告
 warnings.filterwarnings("ignore")
+
+# 尝试导入 talib，如果失败则使用替代实现
+try:
+    import talib
+    TALIB_AVAILABLE = True
+except ImportError:
+    TALIB_AVAILABLE = False
+    print("⚠️ TA-Lib 不可用，使用纯 Python 实现")
+
+# TA-Lib 替代函数（纯 pandas/numpy 实现）
+def _ema(data, timeperiod):
+    """EMA 指数移动平均线"""
+    return data.ewm(span=timeperiod, adjust=False).mean()
+
+def _rsi(data, timeperiod=14):
+    """RSI 相对强弱指数"""
+    delta = data.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=timeperiod).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=timeperiod).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
+
+def _atr(high, low, close, timeperiod=14):
+    """ATR 真实波幅"""
+    high_low = high - low
+    high_close = np.abs(high - close.shift())
+    low_close = np.abs(low - close.shift())
+    ranges = pd.concat([high_low, high_close, low_close], axis=1)
+    true_range = ranges.max(axis=1)
+    return true_range.rolling(timeperiod).mean()
+
+def _cci(high, low, close, timeperiod=14):
+    """CCI 商品通道指数"""
+    tp = (high + low + close) / 3
+    sma = tp.rolling(timeperiod).mean()
+    mad = tp.rolling(timeperiod).apply(lambda x: np.abs(x - x.mean()).mean())
+    return (tp - sma) / (0.015 * mad)
+
+def _adx(high, low, close, timeperiod=14):
+    """ADX 平均趋向指数"""
+    plus_dm = high.diff()
+    minus_dm = -low.diff()
+    plus_dm[plus_dm < 0] = 0
+    minus_dm[minus_dm < 0] = 0
+    
+    tr = _atr(high, low, close, 1)
+    plus_di = 100 * (plus_dm.rolling(timeperiod).mean() / tr.rolling(timeperiod).mean())
+    minus_di = 100 * (minus_dm.rolling(timeperiod).mean() / tr.rolling(timeperiod).mean())
+    
+    dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di)
+    adx = dx.rolling(timeperiod).mean()
+    return adx
+
+def _plus_di(high, low, close, timeperiod=14):
+    """DI+ 正向指标"""
+    plus_dm = high.diff()
+    plus_dm[plus_dm < 0] = 0
+    tr = _atr(high, low, close, 1)
+    return 100 * (plus_dm.rolling(timeperiod).mean() / tr.rolling(timeperiod).mean())
+
+def _minus_di(high, low, close, timeperiod=14):
+    """DI- 负向指标"""
+    minus_dm = -low.diff()
+    minus_dm[minus_dm < 0] = 0
+    tr = _atr(high, low, close, 1)
+    return 100 * (minus_dm.rolling(timeperiod).mean() / tr.rolling(timeperiod).mean())
+
+def _mfi(high, low, close, volume, timeperiod=14):
+    """MFI 资金流量指数"""
+    typical_price = (high + low + close) / 3
+    money_flow = typical_price * volume
+    
+    positive_flow = money_flow.where(typical_price > typical_price.shift(1), 0)
+    negative_flow = money_flow.where(typical_price < typical_price.shift(1), 0)
+    
+    positive_mf = positive_flow.rolling(timeperiod).sum()
+    negative_mf = negative_flow.rolling(timeperiod).sum()
+    
+    mfi = 100 - (100 / (1 + positive_mf / negative_mf))
+    return mfi
+
+def _ad(high, low, close, volume):
+    """AD 累积/派发线"""
+    clv = ((close - low) - (high - close)) / (high - low)
+    clv = clv.fillna(0)
+    ad = (clv * volume).cumsum()
+    return ad
+
+def _obv(close, volume):
+    """OBV 能量潮"""
+    obv = volume.copy()
+    obv[close < close.shift(1)] = -volume[close < close.shift(1)]
+    return obv.cumsum()
+
+def _trix(close, timeperiod=30):
+    """TRIX 三重指数平滑移动平均"""
+    ema1 = close.ewm(span=timeperiod, adjust=False).mean()
+    ema2 = ema1.ewm(span=timeperiod, adjust=False).mean()
+    ema3 = ema2.ewm(span=timeperiod, adjust=False).mean()
+    return ema3.pct_change() * 100
+
+def _tema(close, timeperiod=30):
+    """TEMA 三重指数移动平均"""
+    ema1 = close.ewm(span=timeperiod, adjust=False).mean()
+    ema2 = ema1.ewm(span=timeperiod, adjust=False).mean()
+    ema3 = ema2.ewm(span=timeperiod, adjust=False).mean()
+    return 3 * ema1 - 3 * ema2 + ema3
+
+# 统一的 TA-Lib 函数接口
+if TALIB_AVAILABLE:
+    EMA = talib.EMA
+    RSI = talib.RSI
+    ATR = talib.ATR
+    CCI = talib.CCI
+    ADX = talib.ADX
+    PLUS_DI = talib.PLUS_DI
+    MINUS_DI = talib.MINUS_DI
+    MFI = talib.MFI
+    AD = talib.AD
+    OBV = talib.OBV
+    TRIX = talib.TRIX
+    TEMA = talib.TEMA
+else:
+    EMA = _ema
+    RSI = _rsi
+    ATR = _atr
+    CCI = _cci
+    ADX = _adx
+    PLUS_DI = _plus_di
+    MINUS_DI = _minus_di
+    MFI = _mfi
+    AD = _ad
+    OBV = _obv
+    TRIX = _trix
+    TEMA = _tema
 
 def add_moving_averages(df):
     """
@@ -33,8 +167,8 @@ def add_moving_averages(df):
     df['AVG_TR'] = df['TurnoverRate'].rolling(window=10).mean()
     
     # 添加EMA (指数移动平均线)
-    df['EMA_12'] = talib.EMA(df['Close'], timeperiod=12)
-    df['EMA_26'] = talib.EMA(df['Close'], timeperiod=26)
+    df['EMA_12'] = EMA(df['Close'], timeperiod=12)
+    df['EMA_26'] = EMA(df['Close'], timeperiod=26)
     
     return df
 
@@ -152,9 +286,9 @@ def add_dmi(df):
     添加了DMI指标的DataFrame
     """
     # 添加DMI指标
-    df['DI_plus'] = talib.PLUS_DI(df['High'], df['Low'], df['Close'], timeperiod=14)
-    df['DI_minus'] = talib.MINUS_DI(df['High'], df['Low'], df['Close'], timeperiod=14)
-    df['ADX'] = talib.ADX(df['High'], df['Low'], df['Close'], timeperiod=14)
+    df['DI_plus'] = PLUS_DI(df['High'], df['Low'], df['Close'], timeperiod=14)
+    df['DI_minus'] = MINUS_DI(df['High'], df['Low'], df['Close'], timeperiod=14)
+    df['ADX'] = ADX(df['High'], df['Low'], df['Close'], timeperiod=14)
     
     return df
 
@@ -172,13 +306,13 @@ def add_volume_indicators(df):
     df['VWAP'] = (df['Close'] * df['Volume']).rolling(window=20).sum() / df['Volume'].rolling(window=20).sum()
     
     # 添加MFI (资金流量指标)
-    df['MFI'] = talib.MFI(df['High'], df['Low'], df['Close'], df['Volume'], timeperiod=14)
+    df['MFI'] = MFI(df['High'], df['Low'], df['Close'], df['Volume'], timeperiod=14)
 
     # 添加AD (累积/派发)
-    df['AD'] = talib.AD(df['High'], df['Low'], df['Close'], df['Volume'])
+    df['AD'] = AD(df['High'], df['Low'], df['Close'], df['Volume'])
 
     # 添加OBV (On-Balance Volume)
-    df['OBV'] = talib.OBV(df['Close'], df['Volume'])
+    df['OBV'] = OBV(df['Close'], df['Volume'])
     
     return df
 
@@ -193,10 +327,10 @@ def add_other_indicators(df):
     添加了其他技术指标的DataFrame
     """
     # 添加TRIX指标
-    df['TRIX'] = talib.TRIX(df['Close'], timeperiod=30)
+    df['TRIX'] = TRIX(df['Close'], timeperiod=30)
     
     # 添加TEMA指标
-    df['TEMA'] = talib.TEMA(df['Close'], timeperiod=30)
+    df['TEMA'] = TEMA(df['Close'], timeperiod=30)
     
     # 添加Williams %R
     highest_high = df['High'].rolling(window=14).max()
@@ -204,13 +338,13 @@ def add_other_indicators(df):
     df['Williams_R'] = -100 * (highest_high - df['Close']) / (highest_high - lowest_low)
     
     # 添加ATR (真实波幅)
-    df['ATR'] = talib.ATR(df['High'], df['Low'], df['Close'], timeperiod=14)
+    df['ATR'] = ATR(df['High'], df['Low'], df['Close'], timeperiod=14)
     
     # 添加CCI (commodity channel index)
-    df['CCI'] = talib.CCI(df['High'], df['Low'], df['Close'], timeperiod=14)
+    df['CCI'] = CCI(df['High'], df['Low'], df['Close'], timeperiod=14)
 
     # 添加RSI (相对强弱指数)
-    df['RSI'] = talib.RSI(df['Close'], timeperiod=14)
+    df['RSI'] = RSI(df['Close'], timeperiod=14)
     
     return df
 
