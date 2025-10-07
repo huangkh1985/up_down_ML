@@ -192,7 +192,10 @@ class StreamlitPredictor:
                 _self.pattern_models = data['models']
                 _self.feature_columns = data['feature_columns']
             status['pattern'] = True
-        except:
+        except Exception as e:
+            print(f"⚠️ 形态模型加载失败: {str(e)}")
+            _self.pattern_models = {}
+            _self.feature_columns = []
             status['pattern'] = False
         
         # 加载MA20模型（旧版单一模型）
@@ -654,7 +657,9 @@ class StreamlitPredictor:
                     'signal': '有信号' if pred_label == 1 else '无信号',
                     'confidence': pred_proba if pred_label == 1 else (1 - pred_proba)
                 }
-            except:
+            except Exception as e:
+                # 静默失败，但在控制台打印错误（便于调试）
+                print(f"⚠️ 形态预测错误 (horizon={horizon}): {str(e)}")
                 continue
         
         return results
@@ -719,7 +724,7 @@ class StreamlitPredictor:
                 'avg_confidence': avg_confidence,
                 'color': color,
                 'ma20_signal': ma20_pred.get('signal', 'N/A'),
-                'pattern_signal': pattern_pred.get('signal', 'N/A')
+                'pattern_signal': pattern_pred.get('signal', '暂无') if pattern_pred else '暂无'
             }
         
         return decisions
@@ -743,7 +748,7 @@ def check_system_status():
     # 显示状态
     st.sidebar.markdown("### 📁 文件状态")
     st.sidebar.write("✅ 数据文件" if status['data'] else "❌ 数据文件")
-    st.sidebar.write("✅ 形态识别模型" if status['pattern_model'] else "❌ 形态识别模型")
+    st.sidebar.write("✅ 形态识别模型" if status['pattern_model'] else "⚠️ 形态识别模型(暂不可用)")
     st.sidebar.write("✅ MA20多窗口模型" if status['ma20_multi_model'] else "❌ MA20多窗口模型")
     st.sidebar.write("✅ MA10多窗口模型" if status['ma10_multi_model'] else "❌ MA10多窗口模型")
     
