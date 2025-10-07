@@ -610,57 +610,117 @@ class StreamlitPredictor:
             }
     
     def predict_pattern(self, stock_data, horizons=[1, 3, 5, 10]):
-        """形态信号预测"""
+        """形态信号预测（支持模型预测和规则备用）"""
         results = {}
         
-        if not self.pattern_models:
+        # 如果有模型，使用模型预测
+        if self.pattern_models:
+            lookback_days = 60
+            if len(stock_data) >= lookback_days:
+                lookback_data = stock_data.iloc[-lookback_days:]
+                
+                for horizon in horizons:
+                    if horizon not in self.pattern_models:
+                        continue
+                    
+                    try:
+                        # 提取特征
+                        feature_dict = {}
+                        for col in ['Close', 'Volume', 'TurnoverRate']:
+                            if col in lookback_data.columns:
+                                values = lookback_data[col].values
+                                feature_dict[f'{col}_mean'] = np.mean(values)
+                                feature_dict[f'{col}_std'] = np.std(values)
+                                feature_dict[f'{col}_last'] = values[-1]
+                        
+                        if not self.feature_columns:
+                            continue
+                        
+                        # 填充特征
+                        for col in self.feature_columns:
+                            if col not in feature_dict:
+                                feature_dict[col] = 0
+                        
+                        X_pred = pd.DataFrame([feature_dict])[self.feature_columns]
+                        
+                        # 预测
+                        model = self.pattern_models[horizon]['model']
+                        pred_proba = model.predict_proba(X_pred)[0, 1]
+                        pred_label = 1 if pred_proba > 0.5 else 0
+                        
+                        results[horizon] = {
+                            'probability': pred_proba,
+                            'prediction': pred_label,
+                            'signal': '有信号' if pred_label == 1 else '无信号',
+                            'confidence': pred_proba if pred_label == 1 else (1 - pred_proba),
+                            'method': 'ML模型'
+                        }
+                    except Exception as e:
+                        print(f"⚠️ 形态预测错误 (horizon={horizon}): {str(e)}")
+                        continue
+        
+        # 如果没有模型结果，使用简化规则作为备用
+        if not results:
+            results = self._predict_pattern_rule_based(stock_data, horizons)
+        
+        return results
+    
+    def _predict_pattern_rule_based(self, stock_data, horizons=[1, 3, 5, 10]):
+        """基于规则的形态识别（备用方案）"""
+        results = {}
+        
+        if len(stock_data) < 30:
             return results
         
-        lookback_days = 60
-        if len(stock_data) < lookback_days:
-            return results
-        
-        lookback_data = stock_data.iloc[-lookback_days:]
-        
-        for horizon in horizons:
-            if horizon not in self.pattern_models:
-                continue
+        try:
+            # 提取关键指标
+            close = stock_data['Close'].values
+            volume = stock_data['Volume'].values if 'Volume' in stock_data.columns else None
             
-            try:
-                # 提取特征
-                feature_dict = {}
-                for col in ['Close', 'Volume', 'TurnoverRate']:
-                    if col in lookback_data.columns:
-                        values = lookback_data[col].values
-                        feature_dict[f'{col}_mean'] = np.mean(values)
-                        feature_dict[f'{col}_std'] = np.std(values)
-                        feature_dict[f'{col}_last'] = values[-1]
+            # 计算短期趋势
+            ma5 = pd.Series(close).rolling(5).mean().values
+            ma10 = pd.Series(close).rolling(10).mean().values
+            
+            # 当前价格相对位置
+            current_price = close[-1]
+            
+            for horizon in horizons:
+                # 多因子评分
+                score = 0
                 
-                if not self.feature_columns:
-                    continue
+                # 因子1: 价格趋势 (40%)
+                if len(ma5) > 1 and len(ma10) > 1:
+                    if ma5[-1] > ma10[-1]:  # 短期均线在长期均线上方
+                        score += 0.4
+                    if ma5[-1] > ma5[-2]:  # 短期均线向上
+                        score += 0.2
                 
-                # 填充特征
-                for col in self.feature_columns:
-                    if col not in feature_dict:
-                        feature_dict[col] = 0
+                # 因子2: 成交量 (30%)
+                if volume is not None and len(volume) > 5:
+                    recent_vol = np.mean(volume[-5:])
+                    avg_vol = np.mean(volume[-20:])
+                    if recent_vol > avg_vol * 1.2:  # 成交量放大
+                        score += 0.3
                 
-                X_pred = pd.DataFrame([feature_dict])[self.feature_columns]
+                # 因子3: 价格动能 (30%)
+                if len(close) > horizon:
+                    price_change = (close[-1] - close[-horizon]) / close[-horizon]
+                    if price_change > 0:  # 价格上涨
+                        score += min(0.3, price_change * 10)  # 最多0.3分
                 
-                # 预测
-                model = self.pattern_models[horizon]['model']
-                pred_proba = model.predict_proba(X_pred)[0, 1]
-                pred_label = 1 if pred_proba > 0.5 else 0
+                # 转换为概率
+                probability = min(0.95, max(0.05, score))
+                pred_label = 1 if probability > 0.5 else 0
                 
                 results[horizon] = {
-                    'probability': pred_proba,
+                    'probability': probability,
                     'prediction': pred_label,
                     'signal': '有信号' if pred_label == 1 else '无信号',
-                    'confidence': pred_proba if pred_label == 1 else (1 - pred_proba)
+                    'confidence': probability if pred_label == 1 else (1 - probability),
+                    'method': '规则分析'
                 }
-            except Exception as e:
-                # 静默失败，但在控制台打印错误（便于调试）
-                print(f"⚠️ 形态预测错误 (horizon={horizon}): {str(e)}")
-                continue
+        except Exception as e:
+            print(f"⚠️ 规则形态识别错误: {str(e)}")
         
         return results
     
@@ -748,7 +808,7 @@ def check_system_status():
     # 显示状态
     st.sidebar.markdown("### 📁 文件状态")
     st.sidebar.write("✅ 数据文件" if status['data'] else "❌ 数据文件")
-    st.sidebar.write("✅ 形态识别模型" if status['pattern_model'] else "⚠️ 形态识别模型(暂不可用)")
+    st.sidebar.write("✅ 形态识别模型" if status['pattern_model'] else "⚠️ 形态识别(使用规则)")
     st.sidebar.write("✅ MA20多窗口模型" if status['ma20_multi_model'] else "❌ MA20多窗口模型")
     st.sidebar.write("✅ MA10多窗口模型" if status['ma10_multi_model'] else "❌ MA10多窗口模型")
     
