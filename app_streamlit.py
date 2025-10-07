@@ -344,7 +344,7 @@ class StreamlitPredictor:
                 
                 # 根据预测结果生成信号描述
                 is_strong = probability > 0.5
-                signal_text = f'强势(≥MA{ma_period})' if is_strong else f'弱势(<MA{ma_period})'
+                signal_text = f'强势(≥MA{ma_period})' if is_strong else f'弱势(低于MA{ma_period})'
                 
                 results[horizon] = {
                     'probability': probability,
@@ -365,7 +365,7 @@ class StreamlitPredictor:
                     results[horizon] = {
                         'probability': probability,
                         'prediction': 1 if is_strong else 0,
-                        'signal': f'强势(≥MA20)' if is_strong else '弱势(<MA20)',
+                        'signal': f'强势(≥MA20)' if is_strong else '弱势(低于MA20)',
                         'confidence': max(probability, 1-probability),
                         'ma_period': 20,
                         'method': '规则分析(MA20-回退)'
