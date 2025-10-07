@@ -7,33 +7,51 @@
 import os
 import tempfile
 import pathlib
+import builtins
 
 # 创建临时缓存目录
 temp_dir = tempfile.gettempdir()
-cache_dir = pathlib.Path(temp_dir) / '.efinance'
+cache_dir = pathlib.Path(temp_dir) / '.efinance_cache'
+cache_dir.mkdir(parents=True, exist_ok=True)
 
-# 设置环境变量，让 efinance 使用临时目录
+# 设置环境变量
 os.environ['HOME'] = temp_dir
 os.environ.setdefault('USERPROFILE', temp_dir)
+os.environ['MPLCONFIGDIR'] = str(cache_dir / 'matplotlib')
 
-# Monkey patch os.mkdir 以处理权限错误（仅用于 efinance 导入）
+# 保存原始函数
+_original_open = builtins.open
 _original_os_mkdir = os.mkdir
+
+def _safe_open(file, mode='r', *args, **kwargs):
+    """安全的 open 函数，处理 efinance 缓存写入错误"""
+    try:
+        # 如果是 efinance 的缓存文件，尝试创建必要的目录
+        if isinstance(file, str) and ('efinance' in file or 'search-cache' in file):
+            file_path = pathlib.Path(file)
+            if file_path.parent and not file_path.parent.exists():
+                try:
+                    file_path.parent.mkdir(parents=True, exist_ok=True)
+                except:
+                    # 如果无法创建，使用临时目录
+                    file = str(cache_dir / file_path.name)
+        return _original_open(file, mode, *args, **kwargs)
+    except (PermissionError, FileNotFoundError) as e:
+        # 对于写入操作，如果失败则使用临时文件
+        if 'w' in mode or 'a' in mode:
+            import io
+            return io.StringIO()  # 返回一个内存文件对象
+        raise
 
 def _safe_os_mkdir(path, mode=0o777, *, dir_fd=None):
     """安全的 os.mkdir，处理权限错误"""
     try:
         _original_os_mkdir(path, mode=mode, dir_fd=dir_fd)
-    except PermissionError:
-        # 权限错误时静默失败（efinance 会继续运行）
-        pass
-    except FileExistsError:
-        # 目录已存在，忽略
-        pass
-    except Exception:
-        # 其他错误也静默失败
+    except (PermissionError, FileExistsError, OSError):
         pass
 
-# 临时替换 os.mkdir
+# 永久替换函数（整个应用运行期间有效，解决 efinance 运行时错误）
+builtins.open = _safe_open
 os.mkdir = _safe_os_mkdir
 
 # 现在导入其他包
@@ -49,12 +67,8 @@ import sys
 
 warnings.filterwarnings('ignore')
 
-# 导入 efinance（这时会使用我们的 safe_os_mkdir）
-try:
-    import efinance as ef
-finally:
-    # 导入完成后，恢复原始的 os.mkdir 方法
-    os.mkdir = _original_os_mkdir
+# 导入 efinance（使用我们的补丁函数）
+import efinance as ef
 
 # 配置页面
 st.set_page_config(
