@@ -27,20 +27,34 @@ def _safe_open(file, mode='r', *args, **kwargs):
     """安全的 open 函数，处理 efinance 缓存写入错误"""
     try:
         # 如果是 efinance 的缓存文件，尝试创建必要的目录
-        if isinstance(file, str) and ('efinance' in file or 'search-cache' in file):
+        if isinstance(file, str) and ('efinance' in file or 'search-cache' in file or 'data' in file):
             file_path = pathlib.Path(file)
+            # 检查父目录是否存在
             if file_path.parent and not file_path.parent.exists():
                 try:
                     file_path.parent.mkdir(parents=True, exist_ok=True)
-                except:
-                    # 如果无法创建，使用临时目录
-                    file = str(cache_dir / file_path.name)
+                except Exception:
+                    # 如果无法创建原始目录，重定向到临时目录
+                    if 'w' in mode or 'a' in mode:
+                        temp_file = cache_dir / file_path.name
+                        return _original_open(str(temp_file), mode, *args, **kwargs)
         return _original_open(file, mode, *args, **kwargs)
-    except (PermissionError, FileNotFoundError) as e:
+    except (PermissionError, FileNotFoundError, OSError) as e:
         # 对于写入操作，如果失败则使用临时文件
         if 'w' in mode or 'a' in mode:
+            try:
+                # 尝试在临时目录创建文件
+                if isinstance(file, str):
+                    temp_file = cache_dir / pathlib.Path(file).name
+                    return _original_open(str(temp_file), mode, *args, **kwargs)
+            except:
+                # 最后的保护：返回内存文件对象
+                import io
+                return io.StringIO()
+        # 读取操作失败时，返回空内容
+        if 'r' in mode:
             import io
-            return io.StringIO()  # 返回一个内存文件对象
+            return io.StringIO('')
         raise
 
 def _safe_os_mkdir(path, mode=0o777, *, dir_fd=None):
@@ -69,6 +83,17 @@ warnings.filterwarnings('ignore')
 
 # 导入 efinance（使用我们的补丁函数）
 import efinance as ef
+
+# 额外的 efinance 内部补丁 - 禁用缓存保存功能
+try:
+    from efinance.utils import __init__ as efinance_utils
+    # 替换保存函数为空操作，避免文件写入错误
+    def _dummy_save(*args, **kwargs):
+        pass  # 不做任何操作
+    if hasattr(efinance_utils, 'save_search_result'):
+        efinance_utils.save_search_result = _dummy_save
+except Exception:
+    pass  # 如果补丁失败也没关系，应用仍能运行
 
 # 配置页面
 st.set_page_config(
